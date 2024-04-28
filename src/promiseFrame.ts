@@ -15,53 +15,43 @@ const promiseFrame = async <
   functions: T,
   limit?: number
 ): Promise<ResultsT[]> => {
-  if (!Array.isArray(functions)) {
+  if (!Array.isArray(functions) || (typeof limit === 'number' && limit <= 0)) {
     throw new Error('INVALID_ARGUMENT');
   }
-  if (typeof limit === 'undefined') {
-    return Promise.all(functions.map((fn) => fn()));
-  }
 
-  if (typeof limit !== 'number' || limit <= 0) {
+  if (typeof limit !== 'undefined' && typeof limit !== 'number') {
     throw new Error('INVALID_ARGUMENT');
   }
-  const meta: Record<string, any> = {};
-  let taskIndex = 0;
-  let running = 0;
 
-  await new Promise((resolve, reject) => {
-    const inner = () => {
-      if (functions.length === taskIndex && running === 0) {
-        resolve(true);
-      }
-      while (running < limit && functions.length !== taskIndex) {
-        const currentIndex = taskIndex;
-        const task = functions[currentIndex];
-        if (running < limit) {
-          const res = task();
-          if (!(res instanceof Promise)) {
-            meta[currentIndex] = res;
-          } else {
-            running += 1;
-            res
-              .then((result) => {
-                running--;
-                meta[currentIndex] = result;
-                inner();
-              })
-              .catch((err) => reject(err));
-          }
-          taskIndex += 1;
-          if (functions.length === taskIndex && running === 0) {
-            resolve(true);
-          }
+  return new Promise((resolve, reject) => {
+    let resolvedTasks = 0;
+    const stack = functions.map((task, index) => ({ task, index }));
+    const results: ResultsT[] = [];
+    const executor = async (taskItem: { task: T[number]; index: number }) => {
+      try {
+        const { task, index } = taskItem;
+        results[index] = await task();
+        resolvedTasks++;
+
+        if (resolvedTasks === functions.length) {
+          resolve(results);
         }
+        const taskForExecutor = stack.shift();
+        if (taskForExecutor) {
+          executor(taskForExecutor);
+        }
+      } catch (e) {
+        reject(e);
       }
     };
-    inner();
-  });
 
-  return Object.values(meta);
+    for (let i = 0; i < (limit || functions.length); i++) {
+      const taskItem = stack.shift();
+      if (taskItem) {
+        executor(taskItem);
+      }
+    }
+  });
 };
 
 export default promiseFrame;
